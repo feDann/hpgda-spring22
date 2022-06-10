@@ -38,6 +38,22 @@ using clock_type = chrono::high_resolution_clock;
 
 // Write GPU kernel here!
 
+__global__ void spmv_coo_gpu (const int num_vals, const int* row_ids, const int* col_ids, const float* vals, const float* in_vec, float* out_vec) {
+  for ( int i = threadIdx.x + blockIdx.x * blockDim.x ; i < num_vals ; i += blockDim.x * gridDim.x ) {
+    if ( i < num_vals ) {
+        atomicAdd(out_vec + row_ids[i], vals[i] * in_vec[col_ids[i]]);
+    }
+  }
+}
+
+__global__ void dot_product_gpu (const int* vec1 , const int* vec2 , const int size , float* result){
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if(id < size ){
+        atomicAdd(result , vec1[id] * vec2[id]);
+    }
+
+}
+
 //////////////////////////////
 //////////////////////////////
 

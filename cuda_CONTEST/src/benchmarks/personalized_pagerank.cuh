@@ -148,5 +148,16 @@ class PersonalizedPageRank : public Benchmark {
     double precision = 0;     // How many top-20 vertices are correctly retrieved;
     std::string graph_file_path = DEFAULT_GRAPH;
 
+    // GPU Variables
+    int* d_x ;
+    int* d_y ;
+    int* d_dangling;
+    double* d_val;
+    double* d_pr;
+    double* d_prTmp;
+    double* d_danglingFactor;
+    int blockNums, threadsPerBlockNums;
+
+
     void initialize_graph();
 };

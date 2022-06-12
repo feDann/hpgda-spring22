@@ -156,6 +156,7 @@ class PersonalizedPageRank : public Benchmark {
     double* d_pr;
     double* d_prTmp;
     double* d_danglingFactor;
+    double* d_err;
     int blockNums, threadsPerBlockNums;
 
 

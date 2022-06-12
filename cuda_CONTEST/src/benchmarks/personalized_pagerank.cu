@@ -59,7 +59,7 @@ __global__ void  axpb_personalized_gpu(const double alpha , const double* prTmp,
     double oneMinusalpha = 1 - alpha;    
     for(int i = threadIdx.x + blockIdx.x * blockDim.x ; i < numVals ; i += blockDim.x * gridDim.x ){
         if(i < numVals){
-            result[i] = alpha * prTmp[i] + beta + ((personalizationVertex == i) ? oneMinusalpha : 0.0);
+            atomicAdd(result + i , alpha * prTmp[i] + beta + ((personalizationVertex == i) ? oneMinusalpha : 0.0));
         }
     }
 }
@@ -165,8 +165,7 @@ void PersonalizedPageRank::reset() {
 
    // Do any GPU reset here, and also transfer data to the GPU;
     cudaMemcpy(d_pr , pr.data() , sizeof(double) * V , cudaMemcpyHostToDevice);
-    cudaMemset(d_danglingFactor , 0 , sizeof(double));
-    cudaMemset(d_err , 0 , sizeof(double));
+
 }
 
 void printArray (double * array , int size){
@@ -188,7 +187,10 @@ void PersonalizedPageRank::execute(int iter) {
     // double* dbg = (double*)malloc(sizeof(double) * V);
 
     while(numIter < max_iterations && !converged ){
-        cudaMemset(d_prTmp , 0 , V);
+        cudaMemset(d_prTmp , 0 , sizeof(double)*V);
+        cudaMemset(d_err , 0 , sizeof(double));
+        cudaMemset(d_danglingFactor , 0 , sizeof(double));
+        
         spmv_coo_gpu<<<1 , 1>>>(V , d_x, d_y, d_val ,d_pr , d_prTmp);
 
         // cudaMemcpy(dbg , d_prTmp , sizeof(double) * V, cudaMemcpyDeviceToHost);
@@ -217,6 +219,7 @@ void PersonalizedPageRank::execute(int iter) {
 
         cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice);
         numIter++;
+
     }
 
     cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost);

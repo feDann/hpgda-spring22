@@ -56,10 +56,10 @@ __global__ void dot_product_gpu (const int* vec1 , const double* vec2 , const in
 }
 
 __global__ void  axpb_personalized_gpu(const double alpha , const double* prTmp, const double beta, const int personalizationVertex , double* result , const int numVals){
-    double oneMinusalpha = 1 - alpha;    
+    double oneMinusalpha = 1 - alpha;
     for(int i = threadIdx.x + blockIdx.x * blockDim.x ; i < numVals ; i += blockDim.x * gridDim.x ){
         if(i < numVals){
-            atomicAdd(result + i , alpha * prTmp[i] + beta + ((personalizationVertex == i) ? oneMinusalpha : 0.0));
+            result[i] = alpha * prTmp[i] + beta + ((personalizationVertex == i) ? oneMinusalpha : 0.0);
         }
     }
 }
@@ -145,6 +145,7 @@ void PersonalizedPageRank::alloc() {
     cudaMemcpy(d_val , val.data() , sizeof(double) * V , cudaMemcpyHostToDevice);
     cudaMemcpy(d_dangling , dangling.data() , sizeof(int) * V , cudaMemcpyHostToDevice);
 
+
 }
 
 // Initialize data;
@@ -166,6 +167,7 @@ void PersonalizedPageRank::reset() {
    // Do any GPU reset here, and also transfer data to the GPU;
     cudaMemcpy(d_pr , pr.data() , sizeof(double) * V , cudaMemcpyHostToDevice);
 
+
 }
 
 void printArray (double * array , int size){
@@ -184,41 +186,40 @@ void PersonalizedPageRank::execute(int iter) {
 
     dim3 blocks(blockNums , 1 , 1);
     dim3 threads(threadsPerBlockNums, 1 , 1);
-    // double* dbg = (double*)malloc(sizeof(double) * V);
 
     while(numIter < max_iterations && !converged ){
-        cudaMemset(d_prTmp , 0 , sizeof(double)*V);
-        cudaMemset(d_err , 0 , sizeof(double));
-        cudaMemset(d_danglingFactor , 0 , sizeof(double));
-        
-        spmv_coo_gpu<<<1 , 1>>>(V , d_x, d_y, d_val ,d_pr , d_prTmp);
+        double danglingFactor;
+        double err;
 
-        // cudaMemcpy(dbg , d_prTmp , sizeof(double) * V, cudaMemcpyDeviceToHost);
-        // printArray(dbg , V);
+        cudaMemset(d_prTmp , 0.0 , sizeof(double)*V);
+        cudaMemset(d_err , 0.0 , sizeof(double));
+        cudaMemset(d_danglingFactor , 0.0 , sizeof(double));
+        
+        spmv_coo_gpu<<<1 , 1>>>(E , d_x, d_y, d_val ,d_pr , d_prTmp);
         cudaDeviceSynchronize();
 
-        dot_product_gpu<<<1 , 1>>>(d_dangling , d_pr , V , d_danglingFactor);
-        double danglingFactor;
-        //no need for synch, memcoy is already synch
+        dot_product_gpu<<<1 , 1>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost);
+        cudaDeviceSynchronize();
 
-        std::cout <<"DINGLINGLINGLING : " << danglingFactor << std::endl;
         
-        axpb_personalized_gpu<<<1 , 1>>>(alpha , d_prTmp , alpha * danglingFactor /V , personalization_vertex , d_prTmp , V);
+        axpb_personalized_gpu<<<1 , 1>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
         cudaDeviceSynchronize();
 
         euclidean_distance_gpu<<<1 , 1>>>(d_pr, d_prTmp, d_err , V);
-        double err;
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
+        cudaDeviceSynchronize();
 
-        std::cout << "ERROR: " <<  err << std::endl;
 
         err = std::sqrt(err);
-
         converged = err <= convergence_threshold;
 
         cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice);
+
+
         numIter++;
+        std::cout <<"DANGLING : " << danglingFactor << std::endl;
+        std::cout << "ERROR: " <<  err << std::endl;
 
     }
 

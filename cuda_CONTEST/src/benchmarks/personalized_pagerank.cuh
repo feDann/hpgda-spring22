@@ -88,7 +88,6 @@ inline void personalized_pagerank_cpu(
         memset(pr_tmp, 0, sizeof(double) * V);
         spmv_coo_cpu(x, y, val, pr, pr_tmp, E);
         double dangling_factor = dot_product_cpu(dangling_bitmap, pr, V);
-        std::cout <<dangling_factor << std::endl; 
         axpb_personalized_cpu(alpha, pr_tmp, alpha * dangling_factor / V, personalization_vertex, pr_tmp, V);
 
         // Check convergence;
@@ -98,6 +97,8 @@ inline void personalized_pagerank_cpu(
         // Update the PageRank vector;
         memcpy(pr, pr_tmp, sizeof(double) * V);
         iter++;
+        std::cout << "DANGLING CPU :" << dangling_factor << std::endl; 
+        std::cout << "ERROR CPU :" << err << std::endl; 
     }
     free(pr_tmp);
 }

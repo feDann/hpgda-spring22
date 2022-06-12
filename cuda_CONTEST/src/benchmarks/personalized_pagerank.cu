@@ -33,12 +33,32 @@
 namespace chrono = std::chrono;
 using clock_type = chrono::high_resolution_clock;
 
+#define CHECK(call)                                                                       \
+    {                                                                                     \
+        const cudaError_t err = call;                                                     \
+        if (err != cudaSuccess)                                                           \
+        {                                                                                 \
+            printf("%s in %s at line %d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
+            exit(EXIT_FAILURE);                                                           \
+        }                                                                                 \
+    }
+
+#define CHECK_KERNELCALL()                                                                \
+    {                                                                                     \
+        const cudaError_t err = cudaGetLastError();                                       \
+        if (err != cudaSuccess)                                                           \
+        {                                                                                 \
+            printf("%s in %s at line %d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
+            exit(EXIT_FAILURE);                                                           \
+        }                                                                                 \
+    }
+
 //////////////////////////////
 //////////////////////////////
 
 // Write GPU kernel here!
 
-__global__ void spmv_coo_gpu (const int numVals, const int* row_ids, const int* col_ids, const double* vals, const double* in_vec, double* out_vec) {
+__global__ void spmv_coo_gpu (const int* row_ids, const int* col_ids, const double* vals, const double* in_vec, double* out_vec , const int numVals) {
   for ( int i = threadIdx.x + blockIdx.x * blockDim.x ; i < numVals ; i += blockDim.x * gridDim.x ) {
     if ( i < numVals ) {
         atomicAdd(out_vec + row_ids[i], vals[i] * in_vec[col_ids[i]]);
@@ -131,19 +151,19 @@ void PersonalizedPageRank::alloc() {
     initialize_graph();
     
     // Allocate any GPU data here;
-    cudaMalloc(&d_x , sizeof(int) * V);
-    cudaMalloc(&d_y , sizeof(int) * V);
-    cudaMalloc(&d_dangling , sizeof(int) * V);
-    cudaMalloc(&d_val , sizeof(double) * V);
-    cudaMalloc(&d_danglingFactor , sizeof(double));
-    cudaMalloc(&d_pr , sizeof(double) * V);
-    cudaMalloc(&d_prTmp , sizeof(double) * V);
-    cudaMalloc(&d_err , sizeof(double));
+    CHECK(cudaMalloc(&d_x , sizeof(int) * E););
+    CHECK(cudaMalloc(&d_y , sizeof(int) * E););
+    CHECK(cudaMalloc(&d_dangling , sizeof(int) * V););
+    CHECK(cudaMalloc(&d_val , sizeof(double) * E););
+    CHECK(cudaMalloc(&d_danglingFactor , sizeof(double)););
+    CHECK(cudaMalloc(&d_pr , sizeof(double) * V););
+    CHECK(cudaMalloc(&d_prTmp , sizeof(double) * V););
+    CHECK(cudaMalloc(&d_err , sizeof(double)););
 
-    cudaMemcpy(d_x , x.data() , sizeof(int) * V , cudaMemcpyHostToDevice);
-    cudaMemcpy(d_y , y.data() , sizeof(int) * V , cudaMemcpyHostToDevice);
-    cudaMemcpy(d_val , val.data() , sizeof(double) * V , cudaMemcpyHostToDevice);
-    cudaMemcpy(d_dangling , dangling.data() , sizeof(int) * V , cudaMemcpyHostToDevice);
+    CHECK(cudaMemcpy(d_x , x.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_y , y.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_val , val.data() , sizeof(double) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_dangling , dangling.data() , sizeof(int) * V , cudaMemcpyHostToDevice););
 
 
 }
@@ -165,16 +185,18 @@ void PersonalizedPageRank::reset() {
    if (debug) std::cout << "personalization vertex=" << personalization_vertex << std::endl;
 
    // Do any GPU reset here, and also transfer data to the GPU;
-    cudaMemcpy(d_pr , pr.data() , sizeof(double) * V , cudaMemcpyHostToDevice);
+    CHECK(cudaMemcpy(d_pr , pr.data() , sizeof(double) * V , cudaMemcpyHostToDevice););
 
 
 }
 
-void printArray (double * array , int size){
+void checkRes (double * vec1 ,double * vec2 , int size){
     for(unsigned int i = 0 ; i<size ; i++){
-        std::cout << *(array + i) << " " ;
+        if(std::abs(vec1[i] - vec2[i]) > std::pow(10, -4)) {
+            std::cout << "ERROR " << i  << " " << vec1[i] << " " <<  vec2[i] << std::endl;
+            exit(-1);
+        }
     }
-    std::cout << std::endl;
 
 }
 
@@ -184,6 +206,9 @@ void PersonalizedPageRank::execute(int iter) {
     int numIter = 0;
     bool converged = false;
 
+
+
+
     dim3 blocks(blockNums , 1 , 1);
     dim3 threads(threadsPerBlockNums, 1 , 1);
 
@@ -191,39 +216,40 @@ void PersonalizedPageRank::execute(int iter) {
         double danglingFactor;
         double err;
 
-        cudaMemset(d_prTmp , 0.0 , sizeof(double)*V);
-        cudaMemset(d_err , 0.0 , sizeof(double));
-        cudaMemset(d_danglingFactor , 0.0 , sizeof(double));
+        CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
+        CHECK(cudaMemset(d_err , 0.0 , sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , sizeof(double)););
         
-        spmv_coo_gpu<<<1 , 1>>>(E , d_x, d_y, d_val ,d_pr , d_prTmp);
+        spmv_coo_gpu<<<blocks , threads>>>(d_x, d_y, d_val ,d_pr , d_prTmp ,E);
         cudaDeviceSynchronize();
+        CHECK_KERNELCALL()
 
-        dot_product_gpu<<<1 , 1>>>(d_dangling , d_pr , V ,  d_danglingFactor);
+
+        dot_product_gpu<<<blocks , threads>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
-
+        CHECK_KERNELCALL()
         
-        axpb_personalized_gpu<<<1 , 1>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
+        axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
         cudaDeviceSynchronize();
+        CHECK_KERNELCALL()
 
-        euclidean_distance_gpu<<<1 , 1>>>(d_pr, d_prTmp, d_err , V);
+        euclidean_distance_gpu<<<blocks , threads>>>(d_pr, d_prTmp, d_err , V);
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
-
+        CHECK_KERNELCALL()
 
         err = std::sqrt(err);
         converged = err <= convergence_threshold;
 
-        cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice);
+        CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
 
 
         numIter++;
-        std::cout <<"DANGLING : " << danglingFactor << std::endl;
-        std::cout << "ERROR: " <<  err << std::endl;
 
     }
 
-    cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost);
+    CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));
 }
 
 void PersonalizedPageRank::cpu_validation(int iter) {

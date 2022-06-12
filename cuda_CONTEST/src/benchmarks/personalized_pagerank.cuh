@@ -97,8 +97,6 @@ inline void personalized_pagerank_cpu(
         // Update the PageRank vector;
         memcpy(pr, pr_tmp, sizeof(double) * V);
         iter++;
-        std::cout << "DANGLING CPU :" << dangling_factor << std::endl; 
-        std::cout << "ERROR CPU :" << err << std::endl; 
     }
     free(pr_tmp);
 }

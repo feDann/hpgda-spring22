@@ -161,4 +161,8 @@ class PersonalizedPageRank : public Benchmark {
 
 
     void initialize_graph();
+
+    // Implementation of the various PPR algorithms
+    void ppr_0(int iter);
+    void ppr_1(int iter);
 };

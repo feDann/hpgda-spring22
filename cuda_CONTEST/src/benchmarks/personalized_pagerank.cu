@@ -211,6 +211,7 @@ void PersonalizedPageRank::execute(int iter) {
 
     dim3 blocks(blockNums , 1 , 1);
     dim3 threads(threadsPerBlockNums, 1 , 1);
+    dim3 blocks_spmv((E + block_size -1)/block_size , 1 , 1);
 
     while(numIter < max_iterations && !converged ){
         double danglingFactor;
@@ -220,7 +221,7 @@ void PersonalizedPageRank::execute(int iter) {
         CHECK(cudaMemset(d_err , 0.0 , sizeof(double)););
         CHECK(cudaMemset(d_danglingFactor , 0.0 , sizeof(double)););
         
-        spmv_coo_gpu<<<blocks , threads>>>(d_x, d_y, d_val ,d_pr , d_prTmp ,E);
+        spmv_coo_gpu<<<blocks_spmv , threads>>>(d_x, d_y, d_val ,d_pr , d_prTmp ,E);
         cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 

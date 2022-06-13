@@ -265,6 +265,8 @@ void checkRes (double * vec1 ,double * vec2 , int size){
 
 
 void PersonalizedPageRank::ppr_0 (int iter) {
+    auto start_tmp = clock_type::now();
+
     // Do the GPU computation here, and also transfer results to the CPU;
     int numIter = 0;
     bool converged = false;
@@ -282,22 +284,18 @@ void PersonalizedPageRank::ppr_0 (int iter) {
         CHECK(cudaMemset(d_danglingFactor , 0.0 , sizeof(double)););
         
         spmv_coo_gpu<<<blocks_spmv , threads>>>(d_x, d_y, d_val ,d_pr , d_prTmp ,E);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
 
         dot_product_gpu<<<blocks , threads>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
         
         axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
         euclidean_distance_gpu<<<blocks , threads>>>(d_pr, d_prTmp, d_err , V);
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
         err = std::sqrt(err);
@@ -310,10 +308,19 @@ void PersonalizedPageRank::ppr_0 (int iter) {
 
     }
 
+    if (debug) {
+        // Synchronize computation by hand to measure GPU exec. time;
+        cudaDeviceSynchronize();
+        auto end_tmp = clock_type::now();
+        auto exec_time = chrono::duration_cast<chrono::microseconds>(end_tmp - start_tmp).count();
+        std::cout << "  pure GPU execution(" << iter << ")=" << double(exec_time) / 1000 << " ms, " << (sizeof(double) * N / (exec_time * 1e3)) << " GB/s" << std::endl;
+    }
+
     CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));
 }
 
 void PersonalizedPageRank::ppr_1(int iter) {
+    auto start_tmp = clock_type::now();
 
     // Do the GPU computation here, and also transfer results to the CPU;
     int numIter = 0;
@@ -332,22 +339,18 @@ void PersonalizedPageRank::ppr_1(int iter) {
         CHECK(cudaMemset(d_danglingFactor , 0.0 , sizeof(double)););
         
         spmv_coo_gpu<<<blocks_spmv , threads>>>(d_x, d_y, d_val ,d_pr , d_prTmp ,E);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
 
         dot_product_gpu_with_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
         
         axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
         euclidean_distance_gpu_with_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
         CHECK_KERNELCALL()
 
         err = std::sqrt(err);
@@ -358,6 +361,14 @@ void PersonalizedPageRank::ppr_1(int iter) {
 
         numIter++;
 
+    }
+
+    if (debug) {
+        // Synchronize computation by hand to measure GPU exec. time;
+        cudaDeviceSynchronize();
+        auto end_tmp = clock_type::now();
+        auto exec_time = chrono::duration_cast<chrono::microseconds>(end_tmp - start_tmp).count();
+        std::cout << "  pure GPU execution(" << iter << ")=" << double(exec_time) / 1000 << " ms, " << (sizeof(double) * N / (exec_time * 1e3)) << " GB/s" << std::endl;
     }
 
     CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));

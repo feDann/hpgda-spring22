@@ -159,6 +159,7 @@ class PersonalizedPageRank : public Benchmark {
     double* d_danglingFactor;
     double* d_err;
     int blockNums, threadsPerBlockNums;
+    int slice_size = 1024; //TODO CALCULATE AT RUNTIME
 
 
     void initialize_graph();

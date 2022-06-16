@@ -161,7 +161,7 @@ __global__ void euclidean_distance_gpu_with_reduction (const double* pr , const 
 
 // CPU Utility functions;
 
-int partition(std::vector<int>& col,std::vector<int>& row,std::vector<int>& vals, int start, int end){
+int partition(std::vector<int>& col,std::vector<int>& row,std::vector<double>& vals, int start, int end){
 
 	int pivot = col[start];
 
@@ -202,7 +202,7 @@ int partition(std::vector<int>& col,std::vector<int>& row,std::vector<int>& vals
 	return pivotIndex;
 }
 
-void quickSort(std::vector<int>& col ,std::vector<int>& row ,std::vector<int>& vals , int start, int end){
+void quickSort(std::vector<int>& col ,std::vector<int>& row ,std::vector<double>& vals , int start, int end){
 
 	// base case
 	if (start >= end)
@@ -325,7 +325,10 @@ void PersonalizedPageRank::alloc() {
 
     //convert coo to scoo
     if( implementation == 2){
-        coo_to_scoo();
+        if(debug) std::cout<< "coo to scoo conversion started" << std::endl;
+        coo_to_scoo(slice_size);
+        if(debug) std::cout<< "coo to scoo conversion ended" << std::endl;
+
     }
     
     // Allocate any GPU data here;

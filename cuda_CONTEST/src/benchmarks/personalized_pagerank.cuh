@@ -137,6 +137,7 @@ class PersonalizedPageRank : public Benchmark {
     std::vector<int> x;       // Source coordinate of edges in graph;
     std::vector<int> y;       // Destination coordinate of edges in graph;
     std::vector<double> val;  // Used for matrix value, initially all values are 1;
+    std::vector<int> idx;   // scoo slice indexes
     std::vector<int> dangling;
     std::vector<double> pr;   // Store here the PageRank values computed by the GPU;
     std::vector<double> pr_golden;  // PageRank values computed by the CPU;
@@ -161,6 +162,9 @@ class PersonalizedPageRank : public Benchmark {
 
 
     void initialize_graph();
+
+    void sort_scoo();
+    void coo_to_scoo(int slice_size);
 
     // Implementation of the various PPR algorithms
     void ppr_0(int iter);

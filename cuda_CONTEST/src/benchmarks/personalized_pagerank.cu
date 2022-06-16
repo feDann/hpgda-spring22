@@ -161,8 +161,118 @@ __global__ void euclidean_distance_gpu_with_reduction (const double* pr , const 
 
 // CPU Utility functions;
 
+int partition(std::vector<int>& col,std::vector<int>& row,std::vector<int>& vals, int start, int end){
+
+	int pivot = col[start];
+
+	int count = 0;
+	for (int i = start + 1; i <= end; i++) {
+		if (col[i] <= pivot)
+			count++;
+	}
+
+	// Giving pivot element its correct position
+	int pivotIndex = start + count;
+	std::swap(col[pivotIndex], col[start]);
+	std::swap(row[pivotIndex], row[start]);
+	std::swap(vals[pivotIndex], vals[start]);
+
+	// Sorting left and right parts of the pivot element
+	int i = start, j = end;
+
+	while (i < pivotIndex && j > pivotIndex) {
+
+		while (col[i] <= pivot) {
+			i++;
+		}
+
+		while (col[j] > pivot) {
+			j--;
+		}
+
+		if (i < pivotIndex && j > pivotIndex) {
+			std::swap(col[i], col[j]);
+			std::swap(row[i], row[j]);
+			std::swap(vals[i], vals[j]);
+            i++;
+            j--;
+		}
+	}
+
+	return pivotIndex;
+}
+
+void quickSort(std::vector<int>& col ,std::vector<int>& row ,std::vector<int>& vals , int start, int end){
+
+	// base case
+	if (start >= end)
+		return;
+
+	// partitioning the array
+	int p = partition(col,row,vals, start, end);
+
+	// Sorting the left part
+	quickSort(col,row,vals, start, p - 1);
+
+	// Sorting the right part
+	quickSort(col,row,vals, p + 1, end);
+}
+
+
+void PersonalizedPageRank::sort_scoo(){
+    for(int i = 0; i < idx.size(); i++){
+        int start = idx[i];
+        int end = i == idx.size()-1 ? x.size() : idx[i+1];
+
+        quickSort(x, y, val , start , end-1);
+
+    }
+}
+
+
+
+//transform from coo to scoo,
+//!requires a non sorted coo
+void PersonalizedPageRank::coo_to_scoo(int slice_size){
+    std::vector<int> col;
+    std::vector<int> row;
+    std::vector<double> vals;
+
+    col.resize(E);
+    row.resize(E);
+    vals.resize(E);
+
+    int ptr = 0;
+    idx.resize(V / slice_size);
+    idx[0] = 0; //first idx is always 0;
+
+    for(int i = 0; i < V / slice_size; i++){
+        for (int j = 0 ; j < E ; j++){
+            if(y[j]>=(i * slice_size) && y[j] < (i*slice_size + slice_size)){
+                col[ptr] = x[j];
+                row[ptr] = y[j];
+                vals[ptr] = val[j];
+                ptr++;
+            }
+            idx[i+1] = ptr;
+        }
+    }
+
+    x = col;
+    y = row;
+    val = vals;
+
+}
+
+
+
 // Read the input graph and initialize it;
 void PersonalizedPageRank::initialize_graph() {
+    
+    bool sortMatrix = true;
+
+    if(implementation == 2) sortMatrix = false;
+
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
@@ -172,7 +282,7 @@ void PersonalizedPageRank::initialize_graph() {
         false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
         debug,                 
         false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
-        true                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
+        sortMatrix                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
     );
     if (num_rows != num_columns) {
         if (debug) std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
@@ -212,6 +322,11 @@ void PersonalizedPageRank::initialize_graph() {
 void PersonalizedPageRank::alloc() {
     // Load the input graph and preprocess it;
     initialize_graph();
+
+    //convert coo to scoo
+    if( implementation == 2){
+        coo_to_scoo();
+    }
     
     // Allocate any GPU data here;
     CHECK(cudaMalloc(&d_x , sizeof(int) * E););

@@ -153,7 +153,7 @@ class PersonalizedPageRank : public Benchmark {
     std::vector<int> s_y;       // row
     std::vector<double> s_val;  // values
     std::vector<int> s_idx;   // scoo slice indexes
-    int lane_size = 256;         // for matrix like the wikipedia one is preferred to have low values, having high values could cause higher conversion time. 
+    int lane_size = 1;         // for matrix like the wikipedia one is preferred to have low values, having high values could cause higher conversion time. 
                               // !lane_size Must be 2^i i=0..10
     int shared_memory;         //found at runtime, is device specific 
     int rows_per_slice;         // shared_memory/sizeof(vals_type)/lane_size

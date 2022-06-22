@@ -106,7 +106,7 @@ __global__ void spmv_scoo_gpu(const int* col_ids, const int* row_ids, const doub
     
     extern __shared__ double shrd_mem[];
 
-    for(int index = row_lane; index < limit; index += blockDim.x / lane_size){
+    for(int index = row_lane; index < limit; index += (blockDim.x + lane_size -1) / lane_size){
         shrd_mem[index*lane_size + lane] = 0;
     }
 
@@ -125,7 +125,7 @@ __global__ void spmv_scoo_gpu(const int* col_ids, const int* row_ids, const doub
 
     __syncthreads();
 
-    for (int index=row_lane; index<limit; index+=blockDim.x/lane_size) { 
+    for (int index=row_lane; index<limit; index+=(blockDim.x + lane_size -1) / lane_size) { 
         volatile double *psdata = &shrd_mem[index*lane_size];
         int tid = (lane+index) & (lane_size - 1);
 
@@ -300,9 +300,9 @@ void PersonalizedPageRank::coo_to_scoo(int slice_size){
 
     for(int i = 0; i < (V+slice_size -1) / slice_size; i++){
         for (int j = 0 ; j < E ; j++){
-            if(y[j]>=(i * slice_size) && y[j] < (i*slice_size + slice_size)){
-                s_x[ptr] = x[j];
-                s_y[ptr] = y[j];
+            if(x[j]>=(i * slice_size) && x[j] < (i*slice_size + slice_size)){
+                s_x[ptr] = y[j];
+                s_y[ptr] = x[j];
                 s_val[ptr] = val[j];
                 ptr++;
             }
@@ -314,17 +314,19 @@ void PersonalizedPageRank::coo_to_scoo(int slice_size){
 
 
 
-
 // Read the input graph and initialize it;
 void PersonalizedPageRank::initialize_graph() {
     
+    bool read_transposed = true;
+
+    if(implementation > 1) read_transposed = false;
 
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
     read_mtx(graph_file_path.c_str(), &x, &y, &val,
         &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
-        true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
+        read_transposed,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
         false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
         debug,                 
         false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
@@ -338,7 +340,7 @@ void PersonalizedPageRank::initialize_graph() {
     }
     if (debug) std::cout << "loaded graph, |V|=" << V << ", |E|=" << E << std::endl;
 
-    // Compute the dangling vector. A vertex is not dangling if it has at least 1 outgoing edge;
+    // Compute the dangling vector. A vertex is not dangling if it has axleast 1 outgoing edge;
     dangling.resize(V);
     std::fill(dangling.begin(), dangling.end(), 1);  // Initially assume all vertices to be dangling;
     for (int i = 0; i < E; i++) {
@@ -388,7 +390,9 @@ void PersonalizedPageRank::alloc() {
         coo_to_scoo(rows_per_slice);
         if(debug) std::cout<< "coo to scoo conversion ended" << std::endl;
 
+        if(debug) std::cout<< "slices sorting started" << std::endl;
         sort_scoo();
+        if(debug) std::cout<< "slices sorting ended" << std::endl;
 
         CHECK(cudaMalloc(&d_idx, sizeof(int) * s_idx.size()));
         CHECK(cudaMemcpy(d_idx , s_idx.data(), sizeof(int) * s_idx.size(), cudaMemcpyHostToDevice));

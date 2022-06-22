@@ -94,6 +94,63 @@ __global__ void spmv_coo_gpu (const int* row_ids, const int* col_ids, const doub
   }
 }
 
+__global__ void spmv_scoo_gpu(const int* col_ids, const int* row_ids, const double* vals, const int* idx, const double* in_vec, double* out_vec , const int numRows , const int numSlices, const int rows_per_slices, const int lane_size){
+
+    int i = idx[blockIdx.x] + threadIdx.x; // 
+    int end = idx[blockIdx.x + 1];
+    
+    int lane = threadIdx.x & (lane_size - 1);
+    int row_lane = threadIdx.x/lane_size;
+
+    int limit = ((blockIdx.x == numSlices - 1) ? ((numRows -1) % rows_per_slices) +1 : rows_per_slices);
+    
+    extern __shared__ double shrd_mem[];
+
+    for(int index = row_lane; index < limit; index += blockDim.x / lane_size){
+        shrd_mem[index*lane_size + lane] = 0;
+    }
+
+    __syncthreads();
+
+    while (i < end){
+        int col = col_ids[i];
+        int row = row_ids[i] - blockIdx.x * rows_per_slices;
+        double val = vals[i];
+
+        double res = in_vec[col] * val;
+
+        atomicAdd(&shrd_mem[row*lane_size + lane], res);
+        i+= blockDim.x;
+    }
+
+    __syncthreads();
+
+    for (int index=row_lane; index<limit; index+=blockDim.x/lane_size) { 
+        volatile double *psdata = &shrd_mem[index*lane_size];
+        int tid = (lane+index) & (lane_size - 1);
+
+        if (lane_size>128 && lane<128) psdata[tid]+=psdata[(tid+128) & (lane_size-1)]; __syncthreads();
+        if (lane_size>64 && lane<64) psdata[tid]+=psdata[(tid+64) & (lane_size-1)]; __syncthreads();
+        if (lane_size>32 && lane<32) psdata[tid]+=psdata[(tid+32) & (lane_size-1)]; __syncthreads();
+
+        if (lane_size>16 && lane<16) psdata[tid]+=psdata[( tid+16 ) & (lane_size-1)];
+        if (lane_size>8 && lane<8) psdata[tid]+=psdata[( tid+8 ) & (lane_size-1)];
+        if (lane_size>4 && lane<4) psdata[tid]+=psdata[( tid+4 ) & (lane_size-1)];
+        if (lane_size>2 && lane<2) psdata[tid]+=psdata[( tid+2 ) & (lane_size-1)];
+        if (lane_size>1 && lane<1) psdata[tid]+=psdata[( tid+1 ) & (lane_size-1)];
+    }
+
+    __syncthreads();
+
+    int actual_row = blockIdx.x * rows_per_slices;
+
+    for (int index = threadIdx.x ; index < limit ; index+= blockDim.x ){
+        out_vec[actual_row + index] = shrd_mem[index*lane_size + lane];
+    }
+
+
+}
+
 
 /*** Dot Product Kernels  ***/
 __global__ void dot_product_gpu (const int* vec1 , const double* vec2 , const int numVals , double* result){
@@ -220,11 +277,11 @@ void quickSort(std::vector<int>& col ,std::vector<int>& row ,std::vector<double>
 
 
 void PersonalizedPageRank::sort_scoo(){
-    for(int i = 0; i < idx.size(); i++){
-        int start = idx[i];
-        int end = i == idx.size()-1 ? x.size() : idx[i+1];
+    for(int i = 0; i < s_idx.size()-1; i++){
+        int start = s_idx[i];
+        int end = s_idx[i+1];
 
-        quickSort(x, y, val , start , end-1);
+        quickSort(s_x, s_y, s_val , start , end-1);
 
     }
 }
@@ -232,46 +289,35 @@ void PersonalizedPageRank::sort_scoo(){
 
 
 //transform from coo to scoo,
-//!requires a non sorted coo
 void PersonalizedPageRank::coo_to_scoo(int slice_size){
-    std::vector<int> col;
-    std::vector<int> row;
-    std::vector<double> vals;
-
-    col.resize(E);
-    row.resize(E);
-    vals.resize(E);
+    s_x.resize(x.size());
+    s_y.resize(y.size());
+    s_val.resize(val.size());
 
     int ptr = 0;
-    idx.resize(V / slice_size);
-    idx[0] = 0; //first idx is always 0;
+    s_idx.resize((V+slice_size -1) / slice_size + 1);
+    s_idx[0] = 0; //first s_idx is always 0;
 
-    for(int i = 0; i < V / slice_size; i++){
+    for(int i = 0; i < (V+slice_size -1) / slice_size; i++){
         for (int j = 0 ; j < E ; j++){
             if(y[j]>=(i * slice_size) && y[j] < (i*slice_size + slice_size)){
-                col[ptr] = x[j];
-                row[ptr] = y[j];
-                vals[ptr] = val[j];
+                s_x[ptr] = x[j];
+                s_y[ptr] = y[j];
+                s_val[ptr] = val[j];
                 ptr++;
             }
-            idx[i+1] = ptr;
+            s_idx[i+1] = ptr;
         }
     }
-
-    x = col;
-    y = row;
-    val = vals;
-
 }
+
+
 
 
 
 // Read the input graph and initialize it;
 void PersonalizedPageRank::initialize_graph() {
     
-    bool sortMatrix = true;
-
-    if(implementation == 2) sortMatrix = false;
 
     // Read the graph from an MTX file;
     int num_rows = 0;
@@ -282,7 +328,7 @@ void PersonalizedPageRank::initialize_graph() {
         false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
         debug,                 
         false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;
-        sortMatrix                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
+        true                         // If true, sort the edges in (x, y) order. If you have a sorted MTX file, turn this to false to make loading faster;
     );
     if (num_rows != num_columns) {
         if (debug) std::cout << "error, the matrix is not squared, rows=" << num_rows << ", columns=" << num_columns << std::endl;
@@ -324,26 +370,44 @@ void PersonalizedPageRank::alloc() {
     initialize_graph();
 
     //convert coo to scoo
-    if( implementation == 2){
+    if( implementation > 1 ){
+        int dev = 0; //id of the GPU
+        cudaDeviceProp devProp;// is a C struct containing all the infos
+        cudaGetDevice(&dev);
+        cudaGetDeviceProperties(&devProp, dev);
+
+        shared_memory = devProp.sharedMemPerBlock;
+        rows_per_slice = shared_memory/sizeof(double)/lane_size;
+        num_slices = (V +  rows_per_slice -1) / rows_per_slice;
+
+        if(debug) std::cout << "Shared Memory: " << shared_memory << std::endl;
+        if(debug) std::cout << "Rows Per Slices: " << rows_per_slice << std::endl;
+        if(debug) std::cout << "Num Slices: " << num_slices << std::endl;
+
         if(debug) std::cout<< "coo to scoo conversion started" << std::endl;
-        coo_to_scoo(slice_size);
+        coo_to_scoo(rows_per_slice);
         if(debug) std::cout<< "coo to scoo conversion ended" << std::endl;
+
+        sort_scoo();
+
+        CHECK(cudaMalloc(&d_idx, sizeof(int) * s_idx.size()));
+        CHECK(cudaMemcpy(d_idx , s_idx.data(), sizeof(int) * s_idx.size(), cudaMemcpyHostToDevice));
 
     }
     
     // Allocate any GPU data here;
     CHECK(cudaMalloc(&d_x , sizeof(int) * E););
     CHECK(cudaMalloc(&d_y , sizeof(int) * E););
-    CHECK(cudaMalloc(&d_dangling , sizeof(int) * V););
     CHECK(cudaMalloc(&d_val , sizeof(double) * E););
+    CHECK(cudaMalloc(&d_dangling , sizeof(int) * V););
     CHECK(cudaMalloc(&d_danglingFactor , sizeof(double)););
     CHECK(cudaMalloc(&d_pr , sizeof(double) * V););
     CHECK(cudaMalloc(&d_prTmp , sizeof(double) * V););
     CHECK(cudaMalloc(&d_err , sizeof(double)););
 
-    CHECK(cudaMemcpy(d_x , x.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
-    CHECK(cudaMemcpy(d_y , y.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
-    CHECK(cudaMemcpy(d_val , val.data() , sizeof(double) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_x , implementation > 1 ? s_x.data() :x.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_y , implementation > 1 ? s_y.data() : y.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
+    CHECK(cudaMemcpy(d_val , implementation > 1 ? s_val.data() : val.data() , sizeof(double) * E , cudaMemcpyHostToDevice););
     CHECK(cudaMemcpy(d_dangling , dangling.data() , sizeof(int) * V , cudaMemcpyHostToDevice););
 
 
@@ -493,6 +557,65 @@ void PersonalizedPageRank::ppr_1(int iter) {
 
 }
 
+
+void PersonalizedPageRank::ppr_2(int iter) {
+    auto start_tmp = clock_type::now();
+
+    // Do the GPU computation here, and also transfer results to the CPU;
+    int numIter = 0;
+    bool converged = false;
+
+    dim3 blocks(blockNums , 1 , 1);
+    dim3 threads(threadsPerBlockNums, 1 , 1);
+    dim3 blocks_spmv((E + block_size -1)/block_size , 1 , 1);
+
+    while(numIter < max_iterations && !converged ){
+        double danglingFactor;
+        double err;
+
+        CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
+        CHECK(cudaMemset(d_err , 0.0 , sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , sizeof(double)););
+        
+        spmv_scoo_gpu<<<num_slices , block_size , rows_per_slice * lane_size * sizeof(double)>>>(d_x, d_y, d_val, d_idx ,d_pr , d_prTmp ,V, num_slices, rows_per_slice, lane_size);
+        CHECK_KERNELCALL()
+
+
+        dot_product_gpu_with_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_dangling , d_pr , V ,  d_danglingFactor);
+        cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost);
+        CHECK_KERNELCALL()
+        
+        axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
+        CHECK_KERNELCALL()
+
+        euclidean_distance_gpu_with_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
+        cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
+        CHECK_KERNELCALL()
+
+        err = std::sqrt(err);
+        converged = err <= convergence_threshold;
+
+        CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
+
+
+        numIter++;
+
+    }
+
+    if (debug) {
+        // Synchronize computation by hand to measure GPU exec. time;
+        cudaDeviceSynchronize();
+        auto end_tmp = clock_type::now();
+        auto exec_time = chrono::duration_cast<chrono::microseconds>(end_tmp - start_tmp).count();
+        std::cout << "  pure GPU execution(" << iter << ")=" << double(exec_time) / 1000 << " ms, " << (sizeof(double) * N / (exec_time * 1e3)) << " GB/s" << std::endl;
+    }
+
+    CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));
+
+}
+
+
+
 void PersonalizedPageRank::execute(int iter) {
     
     switch (implementation)
@@ -502,7 +625,10 @@ void PersonalizedPageRank::execute(int iter) {
         break;
     case 1:
         ppr_1(iter);
-        break;    
+        break;   
+    case 2:
+        ppr_2(iter);
+        break;  
     default:
         break;
     }
@@ -526,8 +652,8 @@ void PersonalizedPageRank::cpu_validation(int iter) {
     std::vector<std::pair<int, double>> sorted_pr_golden_tuples = sort_pr(pr_golden.data(), V);
 
     // Check how many of the correct top-20 PPR vertices are retrieved by the GPU;
-    std::unordered_set<int> top_pr_indices;
-    std::unordered_set<int> top_pr_golden_indices;
+    std::set<int> top_pr_indices;
+    std::set<int> top_pr_golden_indices;
     int old_precision = std::cout.precision();
     std::cout.precision(4);
     int topk = std::min(V, topk_vertices);

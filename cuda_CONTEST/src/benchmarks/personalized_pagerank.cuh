@@ -28,7 +28,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
-#include <unordered_set>
+#include <set>
 #include <iterator>
 #include "../benchmark.cuh"
 
@@ -137,7 +137,6 @@ class PersonalizedPageRank : public Benchmark {
     std::vector<int> x;       // Source coordinate of edges in graph;
     std::vector<int> y;       // Destination coordinate of edges in graph;
     std::vector<double> val;  // Used for matrix value, initially all values are 1;
-    std::vector<int> idx;   // scoo slice indexes
     std::vector<int> dangling;
     std::vector<double> pr;   // Store here the PageRank values computed by the GPU;
     std::vector<double> pr_golden;  // PageRank values computed by the CPU;
@@ -149,9 +148,22 @@ class PersonalizedPageRank : public Benchmark {
     double precision = 0;     // How many top-20 vertices are correctly retrieved;
     std::string graph_file_path = DEFAULT_GRAPH;
 
+    // Sliced COO variables
+    std::vector<int> s_x;       // column
+    std::vector<int> s_y;       // row
+    std::vector<double> s_val;  // values
+    std::vector<int> s_idx;   // scoo slice indexes
+    int lane_size = 256;         // for matrix like the wikipedia one is preferred to have low values, having high values could cause higher conversion time. 
+                              // !lane_size Must be 2^i i=0..10
+    int shared_memory;         //found at runtime, is device specific 
+    int rows_per_slice;         // shared_memory/sizeof(vals_type)/lane_size
+    int num_slices;             
+
+
     // GPU Variables
     int* d_x ;
     int* d_y ;
+    int* d_idx ;
     int* d_dangling;
     double* d_val;
     double* d_pr;
@@ -159,7 +171,6 @@ class PersonalizedPageRank : public Benchmark {
     double* d_danglingFactor;
     double* d_err;
     int blockNums, threadsPerBlockNums;
-    int slice_size = 1024; //TODO CALCULATE AT RUNTIME
 
 
     void initialize_graph();
@@ -170,4 +181,5 @@ class PersonalizedPageRank : public Benchmark {
     // Implementation of the various PPR algorithms
     void ppr_0(int iter);
     void ppr_1(int iter);
+    void ppr_2(int iter);
 };

@@ -151,6 +151,38 @@ __global__ void spmv_scoo_gpu(const int* col_ids, const int* row_ids, const doub
 
 }
 
+/*** Global Reduction Kernel  ***/
+
+__global__ void reduce_global(double* partial){
+    
+    unsigned threadId = threadIdx.x;
+    unsigned index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    extern __shared__ double localVars[];
+
+    if(threadId < blockDim.x / 2){
+        localVars[threadId] = partial[index] + partial[index+blockDim.x/2];
+    }
+    __syncthreads();
+
+    for (unsigned i = blockDim.x / 4; i > 32; i >>= 1)
+    {
+        if (threadId < i)
+        {
+            localVars[threadId] += localVars[threadId + i];
+        }
+        __syncthreads();
+    }
+
+    if(threadId<32)
+        warp_reduce(localVars,threadId);
+    __syncthreads();
+
+    if(threadId==0)
+        partial[blockIdx.x] = localVars[threadId];
+    __syncthreads();
+}
+
 
 /*** Dot Product Kernels  ***/
 __global__ void dot_product_gpu (const int* vec1 , const double* vec2 , const int numVals , double* result){
@@ -172,6 +204,19 @@ __global__ void dot_product_gpu_with_reduction (const int* vec1 , const double* 
     accumulate(tmp_res, blockDim.x);
     if (threadIdx.x == 0) {
         atomicAdd(result, tmp_res[0]);
+    }
+}
+
+__global__ void dot_product_gpu_with_global_reduction (const int* vec1 , const double* vec2 , const int numVals , double* result) {
+    extern __shared__ double tmp_res[];
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id < numVals) {
+        tmp_res[threadIdx.x] = vec1[id] * vec2[id];
+    }
+    __syncthreads();
+    accumulate(tmp_res, blockDim.x);
+    if (threadIdx.x == 0) {
+        result[blockIdx.x] = tmp_res[0];
     }
 }
 
@@ -210,6 +255,20 @@ __global__ void euclidean_distance_gpu_with_reduction (const double* pr , const 
     accumulate(tmp_res, blockDim.x);
     if (threadIdx.x == 0) {
         atomicAdd(err, tmp_res[0]);
+    }
+}
+
+__global__ void euclidean_distance_gpu_with_global_reduction (const double* pr , const double* prTmp , double* err , const int numVals) {
+    extern __shared__ double tmp_res[];
+    int id = threadIdx.x + blockIdx.x * blockDim.x;
+    if (id < numVals) {
+        double tmp = pr[id] - prTmp[id];
+        tmp_res[threadIdx.x] = tmp*tmp;
+    }
+    __syncthreads();
+    accumulate(tmp_res, blockDim.x);
+    if (threadIdx.x == 0) {
+        err[blockIdx.x] = tmp_res[0];
     }
 }
 
@@ -402,11 +461,11 @@ void PersonalizedPageRank::alloc() {
     CHECK(cudaMalloc(&d_x , sizeof(int) * E););
     CHECK(cudaMalloc(&d_y , sizeof(int) * E););
     CHECK(cudaMalloc(&d_val , sizeof(double) * E););
-    CHECK(cudaMalloc(&d_dangling , sizeof(int) * V););
-    CHECK(cudaMalloc(&d_danglingFactor , sizeof(double)););
+    CHECK(cudaMalloc(&d_dangling ,sizeof(int) * V););
+    CHECK(cudaMalloc(&d_danglingFactor ,(implementation> 2 ? V/block_size : 1)*  sizeof(double)););
     CHECK(cudaMalloc(&d_pr , sizeof(double) * V););
     CHECK(cudaMalloc(&d_prTmp , sizeof(double) * V););
-    CHECK(cudaMalloc(&d_err , sizeof(double)););
+    CHECK(cudaMalloc(&d_err ,(implementation> 2 ? V/block_size : 1)*  sizeof(double)););
 
     CHECK(cudaMemcpy(d_x , implementation > 1 ? s_x.data() :x.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
     CHECK(cudaMemcpy(d_y , implementation > 1 ? s_y.data() : y.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
@@ -617,6 +676,68 @@ void PersonalizedPageRank::ppr_2(int iter) {
 
 }
 
+void PersonalizedPageRank::ppr_3(int iter) {
+    auto start_tmp = clock_type::now();
+
+    // Do the GPU computation here, and also transfer results to the CPU;
+    int numIter = 0;
+    bool converged = false;
+
+    dim3 blocks(blockNums , 1 , 1);
+    dim3 threads(threadsPerBlockNums, 1 , 1);
+    dim3 blocks_spmv((E + block_size -1)/block_size , 1 , 1);
+
+    while(numIter < max_iterations && !converged ){
+        double danglingFactor;
+        double err;
+
+        CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
+        CHECK(cudaMemset(d_err , 0.0 , V/block_size * sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , V/block_size *  sizeof(double)););
+        
+        spmv_scoo_gpu<<<num_slices , block_size , rows_per_slice * lane_size * sizeof(double)>>>(d_x, d_y, d_val, d_idx ,d_pr , d_prTmp ,V, num_slices, rows_per_slice, lane_size);
+        CHECK_KERNELCALL()
+
+
+        dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_dangling , d_pr , V ,  d_danglingFactor);
+        CHECK_KERNELCALL()
+        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_danglingFactor);
+        }
+        CHECK(cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost););
+        
+        axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
+        CHECK_KERNELCALL()
+
+        euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
+        CHECK_KERNELCALL()
+        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
+        }
+        cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
+
+        err = std::sqrt(err);
+        converged = err <= convergence_threshold;
+
+        CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
+
+
+        numIter++;
+
+    }
+
+    if (debug) {
+        // Synchronize computation by hand to measure GPU exec. time;
+        cudaDeviceSynchronize();
+        auto end_tmp = clock_type::now();
+        auto exec_time = chrono::duration_cast<chrono::microseconds>(end_tmp - start_tmp).count();
+        std::cout << "  pure GPU execution(" << iter << ")=" << double(exec_time) / 1000 << " ms, " << (sizeof(double) * N / (exec_time * 1e3)) << " GB/s" << std::endl;
+    }
+
+    CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));
+
+}
+
 
 
 void PersonalizedPageRank::execute(int iter) {
@@ -631,7 +752,10 @@ void PersonalizedPageRank::execute(int iter) {
         break;   
     case 2:
         ppr_2(iter);
-        break;  
+        break;
+    case 3:
+        ppr_3(iter);
+        break; 
     default:
         break;
     }

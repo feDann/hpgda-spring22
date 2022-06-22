@@ -213,6 +213,8 @@ __global__ void euclidean_distance_gpu_with_reduction (const double* pr , const 
     }
 }
 
+
+
 //////////////////////////////
 //////////////////////////////
 
@@ -317,16 +319,13 @@ void PersonalizedPageRank::coo_to_scoo(int slice_size){
 // Read the input graph and initialize it;
 void PersonalizedPageRank::initialize_graph() {
     
-    bool read_transposed = true;
-
-    if(implementation > 1) read_transposed = false;
 
     // Read the graph from an MTX file;
     int num_rows = 0;
     int num_columns = 0;
     read_mtx(graph_file_path.c_str(), &x, &y, &val,
         &num_rows, &num_columns, &E, // Store the number of vertices (row and columns must be the same value), and edges;
-        read_transposed,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
+        true,                        // If true, read edges TRANSPOSED, i.e. edge (2, 3) is loaded as (3, 2). We set this true as it simplifies the PPR computation;
         false,                       // If true, read the third column of the matrix file. If false, set all values to 1 (this is what you want when reading a graph topology);
         debug,                 
         false,                       // MTX files use indices starting from 1. If for whatever reason your MTX files uses indices that start from 0, set zero_indexed_file=true;

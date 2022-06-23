@@ -740,6 +740,80 @@ void PersonalizedPageRank::ppr_3(int iter) {
 
 
 
+void PersonalizedPageRank::ppr_4(int iter) {
+    auto start_tmp = clock_type::now();
+
+    // Do the GPU computation here, and also transfer results to the CPU;
+    int numIter = 0;
+    bool converged = false;
+
+    // Stream variables
+    cudaStream_t stream_1;
+    cudaStreamCreateWithFlags(&stream_1, cudaStreamNonBlocking);
+
+
+    dim3 blocks(blockNums , 1 , 1);
+    dim3 threads(threadsPerBlockNums, 1 , 1);
+    dim3 blocks_spmv((E + block_size -1)/block_size , 1 , 1);
+
+    while(numIter < max_iterations && !converged ){
+        double danglingFactor;
+        double err;
+
+        CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
+        CHECK(cudaMemset(d_err , 0.0 , V/block_size * sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , V/block_size *  sizeof(double)););
+        
+        dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double), stream_1>>>(d_dangling , d_pr , V ,  d_danglingFactor);
+        CHECK_KERNELCALL()
+
+        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+           reduce_global<<<i, block_size, block_size*sizeof(unsigned int), stream_1>>>(d_danglingFactor);
+        }
+
+        spmv_scoo_gpu<<<num_slices , block_size , rows_per_slice * lane_size * sizeof(double)>>>(d_x, d_y, d_val, d_idx ,d_pr , d_prTmp ,V, num_slices, rows_per_slice, lane_size);
+        CHECK_KERNELCALL()
+
+        cudaStreamSynchronize(stream_1);
+        CHECK(cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost););
+        
+        axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
+        CHECK_KERNELCALL()
+
+        euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
+        CHECK_KERNELCALL()
+        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
+        }
+        cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
+
+        err = std::sqrt(err);
+        converged = err <= convergence_threshold;
+
+        CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
+
+
+        numIter++;
+
+    }
+
+    cudaStreamDestroy(stream_1);
+
+    if (debug) {
+        // Synchronize computation by hand to measure GPU exec. time;
+        cudaDeviceSynchronize();
+        auto end_tmp = clock_type::now();
+        auto exec_time = chrono::duration_cast<chrono::microseconds>(end_tmp - start_tmp).count();
+        std::cout << "  pure GPU execution(" << iter << ")=" << double(exec_time) / 1000 << " ms, " << (sizeof(double) * N / (exec_time * 1e3)) << " GB/s" << std::endl;
+    }
+
+    CHECK(cudaMemcpy(pr.data() , d_pr , sizeof(double) * V , cudaMemcpyDeviceToHost));
+
+}
+
+
+
+
 void PersonalizedPageRank::execute(int iter) {
     
     switch (implementation)
@@ -755,6 +829,9 @@ void PersonalizedPageRank::execute(int iter) {
         break;
     case 3:
         ppr_3(iter);
+        break;
+    case 4:
+        ppr_4(iter);
         break; 
     default:
         break;

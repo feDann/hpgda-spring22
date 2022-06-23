@@ -183,4 +183,5 @@ class PersonalizedPageRank : public Benchmark {
     void ppr_1(int iter);
     void ppr_2(int iter);
     void ppr_3(int iter);
+    void ppr_4(int iter);
 };

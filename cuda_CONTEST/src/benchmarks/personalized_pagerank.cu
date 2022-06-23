@@ -790,7 +790,13 @@ void PersonalizedPageRank::ppr_4(int iter) {
         err = std::sqrt(err);
         converged = err <= convergence_threshold;
 
-        CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
+        //CHECK(cudaMemcpy(d_pr , d_prTmp , sizeof(double)*V , cudaMemcpyDeviceToDevice));
+        cudaFree(d_pr);
+        d_pr = d_prTmp;
+        double * temp;
+        CHECK(cudaMalloc(&temp, sizeof(double) * V));
+        d_prTmp = temp;
+
 
 
         numIter++;

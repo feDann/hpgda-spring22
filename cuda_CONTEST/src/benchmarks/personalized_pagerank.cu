@@ -701,7 +701,7 @@ void PersonalizedPageRank::ppr_3(int iter) {
 
         dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         CHECK_KERNELCALL()
-        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
            reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_danglingFactor);
         }
         CHECK(cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost););
@@ -711,7 +711,7 @@ void PersonalizedPageRank::ppr_3(int iter) {
 
         euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
         CHECK_KERNELCALL()
-        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
            reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
         }
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
@@ -767,7 +767,7 @@ void PersonalizedPageRank::ppr_4(int iter) {
         dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double), stream_1>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         CHECK_KERNELCALL()
 
-        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
            reduce_global<<<i, block_size, block_size*sizeof(unsigned int), stream_1>>>(d_danglingFactor);
         }
 
@@ -782,7 +782,7 @@ void PersonalizedPageRank::ppr_4(int iter) {
 
         euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
         CHECK_KERNELCALL()
-        for(int i = N/(block_size*block_size); i > 0; i/=block_size){
+        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
            reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
         }
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);

@@ -1,7 +1,9 @@
-data_struct_CONTEST/data/N*
 data_struct_CONTEST/data/*.bfs
 data_struct_CONTEST/data/*.dfs
 data_struct_CONTEST/bin/*
+data_struct_CONTEST/eval_graphs*
+data_struct_CONTEST/myresults_*
+
 big_datasets
 .vscode/
 .DS_Store

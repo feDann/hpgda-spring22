@@ -83,6 +83,39 @@ __device__ void accumulate(double* input , int dim){
     __syncthreads();
 }
 
+__global__ void accumulate_global(double* input , int dim){
+    int thread_id = threadIdx.x;
+
+    extern __shared__ double shmem[];
+
+    if(thread_id < dim){
+        for(int i = thread_id ; i < dim ; i+= blockDim.x ){
+            shmem[i] = input[i];
+        }
+    }
+
+    __syncthreads();
+
+    if (dim > 32) {
+        for (int i = dim/2; i > 32; i>>=1) {
+            if (thread_id < i) {
+                shmem[thread_id] += shmem[thread_id + i];
+            }
+            __syncthreads();
+        }
+    }
+
+    if (thread_id < 32) {
+        warp_reduce(shmem, thread_id);
+    }
+
+    __syncthreads();
+
+    if(thread_id == 0){
+        input[0] = shmem[0];
+    }
+}
+
 
 // Write GPU kernel here!
 
@@ -462,10 +495,10 @@ void PersonalizedPageRank::alloc() {
     CHECK(cudaMalloc(&d_y , sizeof(int) * E););
     CHECK(cudaMalloc(&d_val , sizeof(double) * E););
     CHECK(cudaMalloc(&d_dangling ,sizeof(int) * V););
-    CHECK(cudaMalloc(&d_danglingFactor ,(implementation> 2 ? V/block_size : 1)*  sizeof(double)););
+    CHECK(cudaMalloc(&d_danglingFactor ,(implementation> 2 ? (V + block_size -1)/block_size : 1)*  sizeof(double)););
     CHECK(cudaMalloc(&d_pr , sizeof(double) * V););
     CHECK(cudaMalloc(&d_prTmp , sizeof(double) * V););
-    CHECK(cudaMalloc(&d_err ,(implementation> 2 ? V/block_size : 1)*  sizeof(double)););
+    CHECK(cudaMalloc(&d_err ,(implementation> 2 ? (V + block_size -1)/block_size : 1)*  sizeof(double)););
 
     CHECK(cudaMemcpy(d_x , implementation > 1 ? s_x.data() :x.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
     CHECK(cudaMemcpy(d_y , implementation > 1 ? s_y.data() : y.data() , sizeof(int) * E , cudaMemcpyHostToDevice););
@@ -692,8 +725,8 @@ void PersonalizedPageRank::ppr_3(int iter) {
         double err;
 
         CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
-        CHECK(cudaMemset(d_err , 0.0 , V/block_size * sizeof(double)););
-        CHECK(cudaMemset(d_danglingFactor , 0.0 , V/block_size *  sizeof(double)););
+        CHECK(cudaMemset(d_err , 0.0 , (V + block_size -1)/block_size * sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , (V + block_size -1)/block_size *  sizeof(double)););
         
         spmv_scoo_gpu<<<num_slices , block_size , rows_per_slice * lane_size * sizeof(double)>>>(d_x, d_y, d_val, d_idx ,d_pr , d_prTmp ,V, num_slices, rows_per_slice, lane_size);
         CHECK_KERNELCALL()
@@ -701,9 +734,10 @@ void PersonalizedPageRank::ppr_3(int iter) {
 
         dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         CHECK_KERNELCALL()
-        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
-           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_danglingFactor);
-        }
+        //for(int i = (V + block_size -1)/(block_size*block_size); i > 0; i/=block_size){
+           //reduce_global<<<i, block_size, block_size*sizeof(double)>>>(d_danglingFactor);
+        //}
+           accumulate_global<<<1, block_size, (V + block_size -1)/block_size*sizeof(double)>>>(d_danglingFactor ,(V + block_size -1)/block_size );
         CHECK(cudaMemcpy(&danglingFactor , d_danglingFactor , sizeof(double) , cudaMemcpyDeviceToHost););
         
         axpb_personalized_gpu<<<blocks , threads>>>(alpha , d_prTmp , alpha * danglingFactor / V , personalization_vertex , d_prTmp , V);
@@ -711,9 +745,11 @@ void PersonalizedPageRank::ppr_3(int iter) {
 
         euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
         CHECK_KERNELCALL()
-        for(int i = V/(block_size*block_size); i > 0; i/=block_size){
-           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
-        }
+        //for(int i = (V + block_size -1)/(block_size*block_size); i > 0; i/=block_size){
+        //   reduce_global<<<i, block_size, block_size*sizeof(double)>>>(d_err);
+        //}
+        accumulate_global<<<1, block_size, (V + block_size -1)/block_size*sizeof(double)>>>(d_err ,(V + block_size -1)/block_size );
+
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
 
         err = std::sqrt(err);
@@ -761,14 +797,14 @@ void PersonalizedPageRank::ppr_4(int iter) {
         double err;
 
         CHECK(cudaMemset(d_prTmp , 0.0 , sizeof(double)*V););
-        CHECK(cudaMemset(d_err , 0.0 , V/block_size * sizeof(double)););
-        CHECK(cudaMemset(d_danglingFactor , 0.0 , V/block_size *  sizeof(double)););
+        CHECK(cudaMemset(d_err , 0.0 , (V + block_size -1)/block_size * sizeof(double)););
+        CHECK(cudaMemset(d_danglingFactor , 0.0 , (V + block_size -1)/block_size *  sizeof(double)););
         
         dot_product_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double), stream_1>>>(d_dangling , d_pr , V ,  d_danglingFactor);
         CHECK_KERNELCALL()
 
         for(int i = V/(block_size*block_size); i > 0; i/=block_size){
-           reduce_global<<<i, block_size, block_size*sizeof(unsigned int), stream_1>>>(d_danglingFactor);
+           reduce_global<<<i, block_size, block_size*sizeof(double), stream_1>>>(d_danglingFactor);
         }
 
         spmv_scoo_gpu<<<num_slices , block_size , rows_per_slice * lane_size * sizeof(double)>>>(d_x, d_y, d_val, d_idx ,d_pr , d_prTmp ,V, num_slices, rows_per_slice, lane_size);
@@ -783,7 +819,7 @@ void PersonalizedPageRank::ppr_4(int iter) {
         euclidean_distance_gpu_with_global_reduction<<<blocks , threads, block_size * sizeof(double)>>>(d_pr, d_prTmp, d_err , V);
         CHECK_KERNELCALL()
         for(int i = V/(block_size*block_size); i > 0; i/=block_size){
-           reduce_global<<<i, block_size, block_size*sizeof(unsigned int)>>>(d_err);
+           reduce_global<<<i, block_size, block_size*sizeof(double)>>>(d_err);
         }
         cudaMemcpy(&err , d_err , sizeof(double) , cudaMemcpyDeviceToHost);
 

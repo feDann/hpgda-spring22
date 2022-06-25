@@ -171,6 +171,11 @@ class PersonalizedPageRank : public Benchmark {
     double* d_danglingFactor;
     double* d_err;
     int blockNums, threadsPerBlockNums;
+    int size_of_partials; // size of partial arrays used with global reduction, need to be a multiple of block_size , basically is padded with 0 to have best efficiency
+
+
+    cudaStream_t stream_1;
+    cudaStream_t stream_2;
 
 
     void initialize_graph();

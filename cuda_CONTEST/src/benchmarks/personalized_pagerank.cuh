@@ -176,6 +176,7 @@ class PersonalizedPageRank : public Benchmark {
 
     cudaStream_t stream_1;
     cudaStream_t stream_2;
+    cudaStream_t stream_3;
 
 
     void initialize_graph();
@@ -188,5 +189,4 @@ class PersonalizedPageRank : public Benchmark {
     void ppr_1(int iter);
     void ppr_2(int iter);
     void ppr_3(int iter);
-    void ppr_4(int iter);
 };
